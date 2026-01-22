@@ -8,13 +8,8 @@ import os
 
 router = APIRouter()
 
-# --- SECURITY FIX: Load from Environment Variables ---
 ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
 ADMIN_PASS = os.environ.get("ADMIN_PASSWORD", "123") 
-
-# CORREÇÃO: Tipagem explicita para o FastAPI injetar o objeto Request corretamente
-def get_supabase(request: Request) -> Client:
-    return request.state.supabase
 
 @router.post("/token")
 def login_for_access_token(
@@ -24,11 +19,11 @@ def login_for_access_token(
     user_role = "colaborador"
     username = form_data.username
     
-    # 1. Verificar se é Admin
+    # 1. Verificar Admin
     if username == ADMIN_USER and form_data.password == ADMIN_PASS:
         user_role = "admin"
     
-    # 2. Se não for Admin, verificar se é CPF (Colaborador)
+    # 2. Verificar Colaborador
     else:
         df_cadastro, _ = get_cadastro_sincrono(supabase)
         
@@ -37,7 +32,6 @@ def login_for_access_token(
 
         cpf_limpo = username.replace(".", "").replace("-", "")
         
-        # Verificação segura se as colunas existem
         existe_motorista = False
         existe_ajudante = False
 
@@ -53,7 +47,6 @@ def login_for_access_token(
                 headers={"WWW-Authenticate": "Bearer"},
             )
         
-        # Se for colaborador, a senha é o próprio CPF (login simplificado)
         if form_data.password != username:
              raise HTTPException(status_code=401, detail="Para colaboradores, a senha é o CPF.")
 

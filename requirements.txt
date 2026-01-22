@@ -7,3 +7,4 @@ python-multipart
 openpyxl
 python-jose[cryptography]
 passlib[bcrypt]
+loguru

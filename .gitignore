@@ -1,1 +1,4 @@
 node_modules
+_pycache__
+.env
+.env.local
