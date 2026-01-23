@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
-from fastapi import FastAPI, Request
+from typing import List, Optional
+from fastapi import FastAPI, Request, Query
 from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -8,11 +9,9 @@ from loguru import logger
 from fastapi.openapi.utils import get_openapi
 
 # --- CARREGAMENTO ROBUSTO DO .ENV ---
-# Isso garante que o arquivo seja encontrado mesmo se rodar o terminal de outra pasta
 env_path = Path(__file__).resolve().parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
-# Logs para confirmar o carregamento (pode remover em produção)
 logger.info(f"Carregando .env de: {env_path}")
 logger.info(f"SUPABASE_URL detectada? {'SIM' if os.environ.get('SUPABASE_URL') else 'NÃO'}")
 
@@ -43,7 +42,6 @@ app.add_middleware(
 url: str = os.environ.get("SUPABASE_URL")
 key: str = os.environ.get("SUPABASE_KEY")
 
-# Inicializa como None para evitar 'NameError'
 supabase: Client = None 
 
 if not url or not key:
@@ -58,9 +56,12 @@ else:
 # --- MIDDLEWARE DB SESSION ---
 @app.middleware("http")
 async def db_session_middleware(request: Request, call_next):
-    # Proteção: Verifica se o supabase foi iniciado corretamente
     if supabase is None:
         logger.error("Falha na requisição: Banco de dados não configurado.")
+        # Se for a rota favicon, ignora erro
+        if request.url.path == "/favicon.ico":
+             return Response(status_code=204)
+             
         return Response(
             content="Erro interno: Banco de dados não configurado. Verifique as chaves no .env.", 
             status_code=500
@@ -70,7 +71,7 @@ async def db_session_middleware(request: Request, call_next):
     response = await call_next(request)
     return response
 
-# Middleware para logs de requisições
+# Middleware para logs
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     logger.info(f"Request: {request.method} {request.url}")
@@ -96,11 +97,50 @@ def root():
 
 @app.post("/refresh")
 def refresh_data():
-    """
-    Limpa o cache do servidor para forçar o recálculo dos dados na próxima requisição.
-    """
     clear_cache()
     return {"message": "Cache limpo com sucesso. Dados serão recalculados."}
+
+# --- NOVA ROTA ESPECÍFICA PARA A ABA XADREZ (Detalhado) ---
+@app.get("/xadrez/detalhado")
+def get_xadrez_detalhado(
+    request: Request,
+    date: str = Query(..., description="Data no formato YYYY-MM-DD")
+):
+    """
+    Retorna os mapas detalhados de um dia específico (sem agrupar dashboard).
+    """
+    try:
+        client = request.state.supabase
+        
+        # --- LÓGICA DO BANCO DE DADOS (Exemplo) ---
+        # Substitua 'NOME_DA_SUA_TABELA' pela tabela real onde estão as viagens
+        # response = client.table("VIAGENS").select("*").eq("DATA_VIAGEM", date).execute()
+        # dados = response.data
+        
+        # --- MOCK DATA (Para funcionar agora sem o banco configurado para essa tabela) ---
+        # Remova este bloco IF/ELSE quando tiver a tabela pronta
+        dados = [
+            {
+                "id": 1,
+                "mapa": "1099",
+                "motorista": "Carlos Silva (Backend)",
+                "ajudantes": ["Pedro", "Miguel"],
+                "data": date
+            },
+            {
+                "id": 2,
+                "mapa": "1100",
+                "motorista": "Roberto Dias (Backend)",
+                "ajudantes": ["Lucas"],
+                "data": date
+            }
+        ]
+        
+        return dados
+
+    except Exception as e:
+        logger.error(f"Erro ao buscar xadrez detalhado: {e}")
+        return []
 
 # Customização do OpenAPI
 def custom_openapi():
