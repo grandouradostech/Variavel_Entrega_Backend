@@ -98,21 +98,27 @@ def refresh_data():
     clear_cache()
     return {"message": "Cache limpo com sucesso. Dados serão recalculados."}
 
-# --- ROTA: XADREZ DETALHADO (Conectada ao Banco) ---
+# --- ROTA: XADREZ DETALHADO (Atualizada para Faixa de Datas) ---
 @app.get("/xadrez/detalhado")
 def get_xadrez_detalhado(
     request: Request,
-    date: str = Query(..., description="Data no formato YYYY-MM-DD")
+    data_inicio: str = Query(..., description="Data inicial YYYY-MM-DD"),
+    data_fim: str = Query(..., description="Data final YYYY-MM-DD")
 ):
     """
-    Retorna os dados brutos da tabela 'Distribuição' filtrados por data.
+    Retorna os dados brutos da tabela 'Distribuição' filtrados por período.
     """
     try:
         client = request.state.supabase
         
-        # Consulta real na tabela Distribuição
-        # Seleciona todas as colunas onde a coluna "DATA" é igual ao parametro date
-        response = client.table("Distribuição").select("*").eq("DATA", date).execute()
+        # Consulta com filtro de range (maior ou igual a inicio, menor ou igual a fim)
+        # Ordena por DATA e depois por MAPA
+        response = client.table("Distribuição")\
+            .select("*")\
+            .gte("DATA", data_inicio)\
+            .lte("DATA", data_fim)\
+            .order("DATA", desc=False)\
+            .execute()
         
         return response.data
 
