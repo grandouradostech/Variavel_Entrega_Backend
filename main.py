@@ -58,10 +58,8 @@ else:
 async def db_session_middleware(request: Request, call_next):
     if supabase is None:
         logger.error("Falha na requisição: Banco de dados não configurado.")
-        # Se for a rota favicon, ignora erro
         if request.url.path == "/favicon.ico":
              return Response(status_code=204)
-             
         return Response(
             content="Erro interno: Banco de dados não configurado. Verifique as chaves no .env.", 
             status_code=500
@@ -100,47 +98,27 @@ def refresh_data():
     clear_cache()
     return {"message": "Cache limpo com sucesso. Dados serão recalculados."}
 
-# --- NOVA ROTA ESPECÍFICA PARA A ABA XADREZ (Detalhado) ---
+# --- ROTA: XADREZ DETALHADO (Conectada ao Banco) ---
 @app.get("/xadrez/detalhado")
 def get_xadrez_detalhado(
     request: Request,
     date: str = Query(..., description="Data no formato YYYY-MM-DD")
 ):
     """
-    Retorna os mapas detalhados de um dia específico (sem agrupar dashboard).
+    Retorna os dados brutos da tabela 'Distribuição' filtrados por data.
     """
     try:
         client = request.state.supabase
         
-        # --- LÓGICA DO BANCO DE DADOS (Exemplo) ---
-        # Substitua 'NOME_DA_SUA_TABELA' pela tabela real onde estão as viagens
-        # response = client.table("VIAGENS").select("*").eq("DATA_VIAGEM", date).execute()
-        # dados = response.data
+        # Consulta real na tabela Distribuição
+        # Seleciona todas as colunas onde a coluna "DATA" é igual ao parametro date
+        response = client.table("Distribuição").select("*").eq("DATA", date).execute()
         
-        # --- MOCK DATA (Para funcionar agora sem o banco configurado para essa tabela) ---
-        # Remova este bloco IF/ELSE quando tiver a tabela pronta
-        dados = [
-            {
-                "id": 1,
-                "mapa": "1099",
-                "motorista": "Carlos Silva (Backend)",
-                "ajudantes": ["Pedro", "Miguel"],
-                "data": date
-            },
-            {
-                "id": 2,
-                "mapa": "1100",
-                "motorista": "Roberto Dias (Backend)",
-                "ajudantes": ["Lucas"],
-                "data": date
-            }
-        ]
-        
-        return dados
+        return response.data
 
     except Exception as e:
         logger.error(f"Erro ao buscar xadrez detalhado: {e}")
-        return []
+        return {"error": str(e)}
 
 # Customização do OpenAPI
 def custom_openapi():
