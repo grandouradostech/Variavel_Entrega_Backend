@@ -7,7 +7,7 @@ from fastapi.responses import StreamingResponse
 from typing import Optional, Dict, Any
 from fastapi.concurrency import run_in_threadpool
 from supabase import Client
-from jose import jwt, JWTError # Necessário para validar o token na exportação
+from jose import jwt, JWTError 
 
 # Importações internas
 from core.security import get_current_user, SECRET_KEY, ALGORITHM
@@ -22,48 +22,42 @@ def get_supabase(request: Request) -> Client:
     return request.state.supabase
 
 async def _get_dados_completos(data_inicio: str, data_fim: str, supabase: Client) -> Dict[str, Any]:
-    # --- LÓGICA DE DATAS CORRIGIDA PARA KPIS (26 a 25) ---
-    # O período de apuração de KPIs (Indicadores) é sempre fixo: de 26 do mês anterior até 25 do mês atual.
-    # Exemplo: Se o usuário filtrar 2024-01-01 a 2024-01-31, o KPI deve ser de 2023-12-26 a 2024-01-25.
+    # --- CORREÇÃO: SEPARAÇÃO DE DATAS ---
+    # 1. Datas REAIS (Filtro do usuário) -> Para Viagens e Caixas
+    d_ini_real, d_fim_real = data_inicio, data_fim
+
+    # 2. Datas de CICLO (Automáticas) -> APENAS para buscar KPIs fechados
+    # Isso garante que se o usuário filtrar "hoje", ainda encontre o KPI do mês correspondente
     try:
         data_ref = datetime.date.fromisoformat(data_inicio)
-        
-        # Se o dia inicial for menor que 26 (ex: 01/01), o período é (26/12 a 25/01)
-        # Se for maior ou igual a 26 (ex: 26/01), o período é (26/01 a 25/02)
         if data_ref.day < 26:
-             # Fim do ciclo: dia 25 do mês da data_inicio
-             d_fim_kpi = data_ref.replace(day=25)
-             # Início do ciclo: dia 26 do mês anterior
+             d_fim_ciclo = data_ref.replace(day=25)
              mes_anterior = (data_ref.replace(day=1) - datetime.timedelta(days=1))
-             d_ini_kpi = mes_anterior.replace(day=26)
+             d_ini_ciclo = mes_anterior.replace(day=26)
         else:
-             # Início do ciclo: dia 26 do mês da data_inicio
-             d_ini_kpi = data_ref.replace(day=26)
-             # Fim do ciclo: dia 25 do mês seguinte
+             d_ini_ciclo = data_ref.replace(day=26)
              proximo_mes = (data_ref.replace(day=28) + datetime.timedelta(days=4))
-             d_fim_kpi = proximo_mes.replace(day=25)
-             
-        d_ini_str, d_fim_str = d_ini_kpi.isoformat(), d_fim_kpi.isoformat()
+             d_fim_ciclo = proximo_mes.replace(day=25)
+        d_ini_kpi, d_fim_kpi = d_ini_ciclo.isoformat(), d_fim_ciclo.isoformat()
     except ValueError:
-        # Fallback caso a data não seja válida
-        d_ini_str, d_fim_str = data_inicio, data_fim
+        d_ini_kpi, d_fim_kpi = data_inicio, data_fim
 
     # Buscar Metas
     metas = await run_in_threadpool(_get_metas_sincrono, supabase)
     
-    # 1. Viagens (Base para saber quem trabalhou) - Usa o período de COMPETÊNCIA (26 a 25)
-    df_viagens, err1 = await run_in_threadpool(get_dados_apurados, supabase, d_ini_str, d_fim_str, "")
+    # 1. Viagens (Usa Filtro REAL)
+    df_viagens, err1 = await run_in_threadpool(get_dados_apurados, supabase, d_ini_real, d_fim_real, "")
     
     # 2. Cadastro
     df_cadastro, err2 = await run_in_threadpool(get_cadastro_sincrono, supabase)
     
-    # 3. Indicadores (KPIs) - Usa o período de COMPETÊNCIA (26 a 25)
-    df_indicadores, err3 = await run_in_threadpool(get_indicadores_sincrono, supabase, d_ini_str, d_fim_str)
+    # 3. Indicadores (Usa data de CICLO, pois a tabela exige match exato do período)
+    df_indicadores, err3 = await run_in_threadpool(get_indicadores_sincrono, supabase, d_ini_kpi, d_fim_kpi)
     
-    # 4. Caixas (Produção) - Usa o período de COMPETÊNCIA (26 a 25)
-    df_caixas, err4 = await run_in_threadpool(get_caixas_sincrono, supabase, d_ini_str, d_fim_str)
+    # 4. Caixas (Usa Filtro REAL)
+    df_caixas, err4 = await run_in_threadpool(get_caixas_sincrono, supabase, d_ini_real, d_fim_real)
     
-    # --- DEDUPLICAÇÃO DE MAPAS (CRUCIAL) ---
+    # --- DEDUPLICAÇÃO DE MAPAS ---
     df_viagens_dedup = None
     if df_viagens is not None:
         if 'MAPA' in df_viagens.columns: 
@@ -116,8 +110,7 @@ def _merge_resultados(m_kpi, a_kpi, m_cx, a_cx):
         df['nome'] = df.apply(lambda row: row.get('nome_kpi') if pd.notna(row.get('nome_kpi')) else row.get('nome_cx', ''), axis=1)
         df['cpf'] = df.apply(lambda row: row.get('cpf_kpi') if pd.notna(row.get('cpf_kpi')) else row.get('cpf_cx', ''), axis=1)
         
-        # --- CORREÇÃO DO BUG DE COLUNAS ---
-        # Remove apenas as colunas sufixadas criadas pelo merge, preservando 'premio_kpi'
+        # Remove colunas auxiliares
         cols_to_drop = ['nome_kpi', 'nome_cx', 'cpf_kpi', 'cpf_cx']
         df.drop(columns=[c for c in cols_to_drop if c in df.columns], inplace=True)
 
@@ -178,7 +171,6 @@ async def exportar_relatorio_pagamento(
     token: str, 
     supabase: Client = Depends(get_supabase)
 ):
-    # 1. Validar Token manualmente (pois vem via URL)
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
@@ -189,7 +181,6 @@ async def exportar_relatorio_pagamento(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token expirado ou inválido")
 
     try:
-        # 2. Obter Dados (mesma lógica da visualização)
         dados = await _get_dados_completos(data_inicio, data_fim, supabase)
         
         m_kpi, a_kpi = await run_in_threadpool(
@@ -206,7 +197,6 @@ async def exportar_relatorio_pagamento(
         
         df_m, df_a = await run_in_threadpool(_merge_resultados, m_kpi, a_kpi, m_cx, a_cx)
         
-        # 3. Aplicar Filtro de Segurança
         if role != "admin":
             cpf_user = username.replace(".", "").replace("-", "")
             if not df_m.empty:
@@ -214,7 +204,6 @@ async def exportar_relatorio_pagamento(
             if not df_a.empty:
                 df_a = df_a[df_a['cpf'].astype(str).str.replace(r'[.-]', '', regex=True) == cpf_user]
 
-        # 4. Formatação para Excel
         mapa_colunas = {
             "cod": "CÓDIGO",
             "nome": "NOME",
@@ -226,7 +215,6 @@ async def exportar_relatorio_pagamento(
         
         colunas_finais = ["cod", "nome", "cpf", "premio_caixas", "premio_kpi", "total_a_pagar"]
         
-        # Seleciona e renomeia colunas, garantindo que o DF não esteja vazio para evitar erro
         if not df_m.empty:
             df_m_final = df_m[colunas_finais].rename(columns=mapa_colunas)
         else:
@@ -237,13 +225,11 @@ async def exportar_relatorio_pagamento(
         else:
             df_a_final = pd.DataFrame(columns=mapa_colunas.values())
 
-        # 5. Gerar Arquivo Excel na memória
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df_m_final.to_excel(writer, sheet_name='Motoristas', index=False)
             df_a_final.to_excel(writer, sheet_name='Ajudantes', index=False)
             
-            # Ajuste cosmético de largura das colunas
             for sheet in writer.sheets.values():
                 for column in sheet.columns:
                     try:

@@ -142,21 +142,12 @@ async def ler_relatorio_caixas(
     current_user: dict = Depends(get_current_user),
     supabase: Client = Depends(get_supabase)
 ):
-    try:
-        data_ref = datetime.date.fromisoformat(data_inicio)
-        if data_ref.day < 26:
-             d_fim_ciclo = data_ref.replace(day=25)
-             mes_anterior = (data_ref.replace(day=1) - datetime.timedelta(days=1))
-             d_ini_ciclo = mes_anterior.replace(day=26)
-        else:
-             d_ini_ciclo = data_ref.replace(day=26)
-             proximo_mes = (data_ref.replace(day=28) + datetime.timedelta(days=4))
-             d_fim_ciclo = proximo_mes.replace(day=25)
-        d_ini_str, d_fim_str = d_ini_ciclo.isoformat(), d_fim_ciclo.isoformat()
-    except ValueError:
-        d_ini_str, d_fim_str = data_inicio, data_fim
+    # --- CORREÇÃO: Removemos a lógica de forçar ciclo (26-25) ---
+    # Usamos diretamente as datas enviadas pelo filtro
+    d_ini_str, d_fim_str = data_inicio, data_fim
 
     metas = await run_in_threadpool(_get_metas_sincrono, supabase)
+    # Busca dados usando o filtro real
     df_viagens, err1 = await run_in_threadpool(get_dados_apurados, supabase, d_ini_str, d_fim_str, "")
     df_cadastro, err2 = await run_in_threadpool(get_cadastro_sincrono, supabase)
     df_caixas, err3 = await run_in_threadpool(get_caixas_sincrono, supabase, d_ini_str, d_fim_str)
