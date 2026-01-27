@@ -14,7 +14,7 @@ from core.database import get_supabase
 
 router = APIRouter(prefix="/incentivo", tags=["Incentivo"])
 
-# --- FUNÇÃO DE PROCESSAMENTO (Mantida igual à sua lógica original) ---
+# --- FUNÇÃO DE PROCESSAMENTO (Mantida intacta) ---
 def processar_incentivos_sincrono(
     df_viagens: Optional[pd.DataFrame], 
     df_cadastro: Optional[pd.DataFrame], 
@@ -38,24 +38,17 @@ def processar_incentivos_sincrono(
     
     # Mapas de CPF e Indicadores
     cpf_motorista_map = {}
-    data_inicio_motorista_map = {}
     cpf_ajudante_map = {}
-    data_inicio_ajudante_map = {}
     indicadores_map = {}
-    hoje = datetime.date.today()
 
     if df_cadastro is not None and not df_cadastro.empty:
         df_motoristas_cadastro = df_cadastro[pd.notna(df_cadastro['Codigo_M'])].drop_duplicates(subset=['Codigo_M'])
         df_motoristas_cadastro['Codigo_M_int'] = pd.to_numeric(df_motoristas_cadastro['Codigo_M'], errors='coerce').fillna(0).astype(int)
         cpf_motorista_map = df_motoristas_cadastro.set_index('Codigo_M_int')['CPF_M'].to_dict()
-        df_motoristas_cadastro['Data_M_dt'] = pd.to_datetime(df_motoristas_cadastro['Data_M'], errors='coerce').dt.date
-        data_inicio_motorista_map = df_motoristas_cadastro.set_index('Codigo_M_int')['Data_M_dt'].to_dict()
 
         df_ajudantes_cadastro = df_cadastro[pd.notna(df_cadastro['Codigo_J'])].drop_duplicates(subset=['Codigo_J'])
         df_ajudantes_cadastro['Codigo_J_int'] = pd.to_numeric(df_ajudantes_cadastro['Codigo_J'], errors='coerce').fillna(0).astype(int)
         cpf_ajudante_map = df_ajudantes_cadastro.set_index('Codigo_J_int')['CPF_J'].to_dict()
-        df_ajudantes_cadastro['Data_J_dt'] = pd.to_datetime(df_ajudantes_cadastro['Data_J'], errors='coerce').dt.date
-        data_inicio_ajudante_map = df_ajudantes_cadastro.set_index('Codigo_J_int')['Data_J_dt'].to_dict()
 
     if df_indicadores is not None and not df_indicadores.empty:
         df_indicadores['dev_pdv'] = pd.to_numeric(df_indicadores['dev_pdv'], errors='coerce')
@@ -143,21 +136,12 @@ async def ler_relatorio_incentivo(
     request: Request, 
     data_inicio: str,
     data_fim: str,
-    current_user: dict = Depends(get_current_user), # Proteção
+    current_user: dict = Depends(get_current_user),
     supabase: Client = Depends(get_supabase)
 ):
-    # Lógica de datas para Indicadores (Período de corte dia 26)
-    try:
-        d_obj = datetime.date.fromisoformat(data_inicio)
-        if d_obj.day < 26:
-            d_fim_p = d_obj.replace(day=25)
-            d_ini_p = (d_obj.replace(day=1) - datetime.timedelta(days=1)).replace(day=26)
-        else:
-            d_ini_p = d_obj.replace(day=26)
-            d_fim_p = (d_ini_p + datetime.timedelta(days=32)).replace(day=25)
-        d_ini_str, d_fim_str = d_ini_p.isoformat(), d_fim_p.isoformat()
-    except:
-        d_ini_str, d_fim_str = data_inicio, data_fim
+    # CORREÇÃO: Removemos a lógica que alterava as datas para o ciclo 26-25.
+    # Agora usamos exatamente o que o usuário pediu no filtro.
+    d_ini_str, d_fim_str = data_inicio, data_fim
 
     # Buscas
     metas = await run_in_threadpool(_get_metas_sincrono, supabase)
@@ -170,7 +154,6 @@ async def ler_relatorio_incentivo(
     
     motoristas, ajudantes = [], []
     if not error and df_viagens is not None:
-        # Remove duplicados de mapa para KPIs (igual ao Xadrez)
         if 'MAPA' in df_viagens.columns: 
             df_viagens_dedup = df_viagens.drop_duplicates(subset=['MAPA'])
         else:
