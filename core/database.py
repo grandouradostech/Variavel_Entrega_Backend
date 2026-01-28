@@ -128,7 +128,7 @@ def get_indicadores_sincrono(
 ) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
     """
     Busca os resultados consolidados da tabela 'Resultados_Indicadores'.
-    CORREÇÃO: Busca por intervalo (overlap) em vez de data exata.
+    CORREÇÃO: Busca por intervalo (overlap) e retorna colunas vazias se sem dados.
     """
     try:
         # Lógica de Intersecção:
@@ -144,8 +144,11 @@ def get_indicadores_sincrono(
         )
         
         if not response.data:
-            # Não é um erro, apenas não há dados de indicador para este período
-            return pd.DataFrame(), None 
+            # CORREÇÃO CRÍTICA AQUI:
+            # Retorna um DataFrame vazio MAS com as colunas esperadas.
+            # Isso evita KeyError em pagamento.py e incentivo.py quando tentam acessar 'dev_pdv' etc.
+            colunas_esperadas = ["Codigo_M", "dev_pdv", "Rating_tx", "refugo", "data_inicio_periodo", "data_fim_periodo"]
+            return pd.DataFrame(columns=colunas_esperadas), None 
         
         df_indicadores = pd.DataFrame(response.data)
         df_indicadores.columns = df_indicadores.columns.str.strip()
@@ -181,7 +184,6 @@ def get_caixas_sincrono(
         )
         
         if not response.data:
-            # Não é um erro, apenas não há dados de caixas no período
             return pd.DataFrame(columns=["data", "mapa", "caixas"]), None 
         
         df_caixas = pd.DataFrame(response.data)
