@@ -184,6 +184,7 @@ def get_caixas_sincrono(
         )
         
         if not response.data:
+            # Não é um erro, apenas não há dados de caixas no período
             return pd.DataFrame(columns=["data", "mapa", "caixas"]), None 
         
         df_caixas = pd.DataFrame(response.data)
