@@ -16,7 +16,8 @@ def get_supabase(request: Request) -> Client:
     """Centralized function to retrieve the Supabase client from the request."""
     return request.state.supabase
 
-# --- FUNÇÃO 1 (Existente) ---
+# --- FUNÇÃO 1: DADOS APURADOS (XADREZ) ---
+# Mantém lógica de paginação (while True) e limpeza de texto
 @functools.lru_cache(maxsize=128)
 def get_dados_apurados(
     supabase: Client, 
@@ -87,7 +88,7 @@ def get_dados_apurados(
 
     return df, None
 
-# --- FUNÇÃO 2 (Existente) ---
+# --- FUNÇÃO 2: CADASTRO ---
 @functools.lru_cache(maxsize=128)
 def get_cadastro_sincrono(supabase: Client) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
     """
@@ -118,7 +119,7 @@ def get_cadastro_sincrono(supabase: Client) -> Tuple[Optional[pd.DataFrame], Opt
              return None, "Erro: A tabela 'Cadastro' não existe no schema 'public'."
         return None, "Erro ao conectar à tabela de Cadastro."
 
-# --- FUNÇÃO 3 (Nova) ---
+# --- FUNÇÃO 3: INDICADORES (CORRIGIDA) ---
 @functools.lru_cache(maxsize=128)
 def get_indicadores_sincrono(
     supabase: Client, 
@@ -127,20 +128,23 @@ def get_indicadores_sincrono(
 ) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
     """
     Busca os resultados consolidados da tabela 'Resultados_Indicadores'.
+    CORREÇÃO: Busca por intervalo (overlap) em vez de data exata.
     """
     try:
-        # Busca os indicadores onde o período de pagamento corresponde
-        # exatamente ao período calculado.
+        # Lógica de Intersecção:
+        # Traz o registro se o período do indicador cruzar com o período do filtro.
+        # Condição: (Inicio_Indicador <= Fim_Filtro) AND (Fim_Indicador >= Inicio_Filtro)
+        
         response = (
             supabase.table("Resultados_Indicadores")
             .select("*")
-            .eq("data_inicio_periodo", data_inicio_str)
-            .eq("data_fim_periodo", data_fim_str)
+            .lte("data_inicio_periodo", data_fim_str)  # Indicador começou antes (ou igual) do filtro acabar
+            .gte("data_fim_periodo", data_inicio_str)  # Indicador terminou depois (ou igual) do filtro começar
             .execute()
         )
         
         if not response.data:
-            # Não é um erro, apenas não há dados de indicador para este períodoo
+            # Não é um erro, apenas não há dados de indicador para este período
             return pd.DataFrame(), None 
         
         df_indicadores = pd.DataFrame(response.data)
@@ -155,7 +159,8 @@ def get_indicadores_sincrono(
         if "relation" in str(e) and "does not exist" in str(e):
              return None, "Erro: A tabela 'Resultados_Indicadores' não existe no schema 'public'."
         return None, "Erro ao conectar à tabela de Indicadores."
-    # --- NOVA FUNÇÃO 4 (Adicionar esta ao final do ficheiro) ---
+
+# --- FUNÇÃO 4: CAIXAS ---
 @functools.lru_cache(maxsize=128)
 def get_caixas_sincrono(
     supabase: Client, 
