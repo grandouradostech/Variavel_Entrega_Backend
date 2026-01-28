@@ -6,7 +6,6 @@ from .analysis import limpar_texto
 import functools
 from fastapi import Request
 
-# Configurações globais da tabela
 NOME_DA_TABELA = "Distribuição"
 NOME_COLUNA_DATA = "DATA"
 
@@ -15,23 +14,12 @@ def get_supabase(request: Request) -> Client:
     return request.state.supabase
 
 def validar_colunas(df: pd.DataFrame, colunas_obrigatorias: list):
-    """Verifica se todas as colunas necessárias estão presentes no DataFrame."""
+    """Verifica se todas as colunas necessárias estão presentes no DataFrame para evitar KeyError."""
     colunas_faltantes = [col for col in colunas_obrigatorias if col not in df.columns]
     if colunas_faltantes:
         raise KeyError(f"Colunas obrigatórias ausentes na tabela: {', '.join(colunas_faltantes)}")
 
 # --- FUNÇÃO 1: DADOS APURADOS (XADREZ) ---
-# O cache foi movido para dentro da lógica ou deve ser chaveado apenas por strings (datas/termos)
-# para evitar erros de hash com o objeto 'Client'.
-@functools.lru_cache(maxsize=128)
-def get_dados_apurados_cached(data_inicio_str: str, data_fim_str: str, search_str: str, supabase_url: str):
-    """
-    Versão auxiliar para cache que não usa o objeto Client diretamente como chave.
-    Utilizamos a URL do banco como parte da chave do cache.
-    """
-    # Esta função é chamada internamente pela get_dados_apurados
-    pass
-
 def get_dados_apurados(
     supabase: Client, 
     data_inicio_str: str, 
@@ -48,7 +36,7 @@ def get_dados_apurados(
         page = 0
         
         while True:
-            # Paginação robusta para lidar com limites do Supabase
+            # Paginação robusta para lidar com o limite de 1000 linhas do Supabase
             query = (
                 supabase.table(NOME_DA_TABELA)
                 .select("*")
@@ -70,10 +58,11 @@ def get_dados_apurados(
         
         df = pd.DataFrame(dados_completos)
 
-        # Limpeza de Texto e Validação
+        # Limpeza de Texto
         for col in df.select_dtypes(include=['object']):
             df[col] = df[col].apply(limpar_texto)
         
+        # Validação da coluna COD principal
         if 'COD' in df.columns:
             df['COD'] = pd.to_numeric(df['COD'], errors='coerce')
             df.dropna(subset=['COD'], inplace=True)
@@ -81,7 +70,7 @@ def get_dados_apurados(
         else:
              return None, "A coluna 'COD' principal não foi encontrada."
 
-        # Filtro de Pesquisa opcional
+        # Filtro de Pesquisa
         if search_str:
             search_clean = limpar_texto(search_str)
             colunas_busca = ['MOTORISTA', 'MOTORISTA_2', 'AJUDANTE_1', 'AJUDANTE_2', 'AJUDANTE_3']
@@ -91,38 +80,34 @@ def get_dados_apurados(
                 mask = mask | df[col].str.contains(search_clean, na=False)
             df = df[mask]
             if df.empty:
-                return None, f"Nenhum dado encontrado para o termo: '{search_str}'"
+                return None, f"Nenhum dado encontrado para o termo de busca: '{search_str}'"
 
         return df, None
 
     except Exception as e:
         print(f"Erro ao buscar dados do Supabase (Distribuição): {e}")
         if "permission denied" in str(e):
-             return None, "Erro de permissão no Supabase. Verifique o GRANT da tabela Distribuição."
-        return None, f"Erro ao conectar à tabela '{NOME_DA_TABELA}'."
+             return None, "Erro de permissão no Supabase. Execute o comando GRANT para a tabela Distribuição."
+        return None, "Erro ao conectar à tabela 'Distribuição'."
 
 # --- FUNÇÃO 2: CADASTRO ---
-@functools.lru_cache(maxsize=32)
-def _get_cadastro_raw(supabase_url: str):
-    """Cache interno para dados brutos de cadastro."""
-    pass
-
+@functools.lru_cache(maxsize=128)
 def get_cadastro_sincrono(supabase: Client) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
-    """Busca todos os dados da tabela de cadastro (public.Cadastro)."""
+    """
+    Busca todos os dados da tabela de cadastro (public.Cadastro).
+    NOTA: O lru_cache pode causar erros se o objeto Client mudar, 
+    mas é mantido aqui apenas para compatibilidade de performance se o cliente for persistente.
+    """
     try:
         response = supabase.table("Cadastro").select("*").execute()
         
         if not response.data:
-            return None, "Tabela 'Cadastro' está vazia ou não encontrada."
+            return None, "Tabela 'Cadastro' está vazia ou não foi encontrada."
         
         df_cadastro = pd.DataFrame(response.data)
         df_cadastro.columns = df_cadastro.columns.str.strip()
 
-        # Validação de colunas críticas para evitar KeyError no processamento
-        cols_obrigatorias = ['Codigo_M', 'Codigo_J', 'CPF_M', 'CPF_J']
-        validar_colunas(df_cadastro, [c for c in cols_obrigatorias if c in df_cadastro.columns])
-
-        # Limpeza de CPFs
+        # Limpeza e padronização de CPFs para evitar erros no merge de pagamento
         if 'CPF_M' in df_cadastro.columns:
             df_cadastro['CPF_M'] = df_cadastro['CPF_M'].astype(str).str.replace(r'[.-]', '', regex=True).fillna('')
         if 'CPF_J' in df_cadastro.columns:
@@ -140,7 +125,10 @@ def get_indicadores_sincrono(
     data_inicio_str: str, 
     data_fim_str: str
 ) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
-    """Busca os resultados consolidados da tabela 'Resultados_Indicadores'."""
+    """
+    Busca os resultados consolidados da tabela 'Resultados_Indicadores'.
+    Garante o retorno de colunas mínimas para evitar KeyError no processamento de incentivos.
+    """
     try:
         response = (
             supabase.table("Resultados_Indicadores")
@@ -150,18 +138,19 @@ def get_indicadores_sincrono(
             .execute()
         )
         
-        # Retorna DataFrame vazio com colunas caso não existam dados, evitando erro no merge
         colunas_esperadas = ["Codigo_M", "dev_pdv", "Rating_tx", "refugo", "data_inicio_periodo", "data_fim_periodo"]
         
         if not response.data:
+            # Retorna DataFrame vazio com as colunas esperadas em vez de None
             return pd.DataFrame(columns=colunas_esperadas), None 
         
         df_indicadores = pd.DataFrame(response.data)
         df_indicadores.columns = df_indicadores.columns.str.strip()
+
         return df_indicadores, None
 
     except Exception as e:
-        print(f"Erro ao buscar indicadores: {e}")
+        print(f"Erro ao buscar dados de Indicadores: {e}")
         return None, "Erro ao conectar à tabela de Indicadores."
 
 # --- FUNÇÃO 4: CAIXAS ---
@@ -170,7 +159,10 @@ def get_caixas_sincrono(
     data_inicio_str: str, 
     data_fim_str: str
 ) -> Tuple[Optional[pd.DataFrame], Optional[str]]:
-    """Busca dados de caixas entregues da tabela 'Caixas'."""
+    """
+    Busca dados de caixas entregues da tabela 'Caixas'.
+    Garante a conversão de tipos para cálculo numérico.
+    """
     try:
         response = (
             supabase.table("Caixas")
@@ -181,9 +173,11 @@ def get_caixas_sincrono(
         )
         
         if not response.data:
-            return pd.DataFrame(columns=["data", "mapa", "caixas"]), None 
+            return pd.DataFrame(columns=["data", "mapa", "caixas"]), None
         
         df_caixas = pd.DataFrame(response.data)
+        
+        # Converte tipos para garantir o cálculo correto no bônus de caixas
         df_caixas['mapa'] = df_caixas['mapa'].astype(str)
         df_caixas['caixas'] = pd.to_numeric(df_caixas['caixas'], errors='coerce')
         df_caixas.dropna(subset=['mapa', 'caixas'], inplace=True)
@@ -192,10 +186,10 @@ def get_caixas_sincrono(
         return df_caixas, None
 
     except Exception as e:
-        print(f"Erro ao buscar caixas: {e}")
+        print(f"Erro ao buscar dados de Caixas: {e}")
         return None, "Erro ao conectar à tabela de Caixas."
 
 def clear_cache():
-    """Limpa o cache das funções lru_cache."""
+    """Limpa o cache das funções de banco de dados."""
     get_cadastro_sincrono.cache_clear()
     print("--- CACHE DO BANCO DE DADOS LIMPO ---")
