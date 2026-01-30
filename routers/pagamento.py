@@ -22,25 +22,11 @@ def get_supabase(request: Request) -> Client:
     return request.state.supabase
 
 async def _get_dados_completos(data_inicio: str, data_fim: str, supabase: Client) -> Dict[str, Any]:
-    # --- CORREÇÃO: SEPARAÇÃO DE DATAS ---
-    # 1. Datas REAIS (Filtro do usuário) -> Para Viagens e Caixas
+    # --- CORREÇÃO: FILTRO ÚNICO GLOBAL ---
+    # O sistema agora respeita estritamente o filtro do usuário.
+    # Não há mais cálculo automático de ciclo.
     d_ini_real, d_fim_real = data_inicio, data_fim
-
-    # 2. Datas de CICLO (Automáticas) -> APENAS para buscar KPIs fechados
-    # Isso garante que se o usuário filtrar "hoje", ainda encontre o KPI do mês correspondente
-    try:
-        data_ref = datetime.date.fromisoformat(data_inicio)
-        if data_ref.day < 26:
-             d_fim_ciclo = data_ref.replace(day=25)
-             mes_anterior = (data_ref.replace(day=1) - datetime.timedelta(days=1))
-             d_ini_ciclo = mes_anterior.replace(day=26)
-        else:
-             d_ini_ciclo = data_ref.replace(day=26)
-             proximo_mes = (data_ref.replace(day=28) + datetime.timedelta(days=4))
-             d_fim_ciclo = proximo_mes.replace(day=25)
-        d_ini_kpi, d_fim_kpi = d_ini_ciclo.isoformat(), d_fim_ciclo.isoformat()
-    except ValueError:
-        d_ini_kpi, d_fim_kpi = data_inicio, data_fim
+    d_ini_kpi, d_fim_kpi = data_inicio, data_fim
 
     # Buscar Metas
     metas = await run_in_threadpool(_get_metas_sincrono, supabase)
@@ -148,11 +134,17 @@ async def ler_relatorio_pagamento(
         
         # Filtro de Segurança
         if current_user["role"] != "admin":
-            cpf_user = current_user["username"].replace(".", "").replace("-", "")
+            cpf_user = str(current_user["username"]).replace(".", "").replace("-", "").strip()
+            
             if not df_m.empty:
-                df_m = df_m[df_m['cpf'].astype(str).str.replace(r'[.-]', '', regex=True) == cpf_user]
+                df_m['cpf_clean'] = df_m['cpf'].astype(str).str.replace(r'[.\-\s]', '', regex=True)
+                df_m = df_m[df_m['cpf_clean'] == cpf_user]
+                df_m.drop(columns=['cpf_clean'], inplace=True)
+                
             if not df_a.empty:
-                df_a = df_a[df_a['cpf'].astype(str).str.replace(r'[.-]', '', regex=True) == cpf_user]
+                df_a['cpf_clean'] = df_a['cpf'].astype(str).str.replace(r'[.\-\s]', '', regex=True)
+                df_a = df_a[df_a['cpf_clean'] == cpf_user]
+                df_a.drop(columns=['cpf_clean'], inplace=True)
 
         return {
             "motoristas": df_m.to_dict('records'),
@@ -198,11 +190,17 @@ async def exportar_relatorio_pagamento(
         df_m, df_a = await run_in_threadpool(_merge_resultados, m_kpi, a_kpi, m_cx, a_cx)
         
         if role != "admin":
-            cpf_user = username.replace(".", "").replace("-", "")
+            cpf_user = str(username).replace(".", "").replace("-", "").strip()
+            
             if not df_m.empty:
-                df_m = df_m[df_m['cpf'].astype(str).str.replace(r'[.-]', '', regex=True) == cpf_user]
+                df_m['cpf_clean'] = df_m['cpf'].astype(str).str.replace(r'[.\-\s]', '', regex=True)
+                df_m = df_m[df_m['cpf_clean'] == cpf_user]
+                df_m.drop(columns=['cpf_clean'], inplace=True)
+                
             if not df_a.empty:
-                df_a = df_a[df_a['cpf'].astype(str).str.replace(r'[.-]', '', regex=True) == cpf_user]
+                df_a['cpf_clean'] = df_a['cpf'].astype(str).str.replace(r'[.\-\s]', '', regex=True)
+                df_a = df_a[df_a['cpf_clean'] == cpf_user]
+                df_a.drop(columns=['cpf_clean'], inplace=True)
 
         mapa_colunas = {
             "cod": "CÓDIGO",

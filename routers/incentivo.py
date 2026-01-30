@@ -93,10 +93,18 @@ def processar_incentivos_sincrono(df_viagens, df_cadastro, df_indicadores, df_ca
         motorista_fixo_map = res_xadrez["mapas"].get("motorista_fixo_map", {})
         df_melted = res_xadrez["df_melted"]
         
+        # --- CORREÇÃO: Filtrar apenas ajudantes visíveis no Xadrez ---
+        ids_visiveis = set(res_xadrez.get("ids_visiveis", []))
+
         if not df_melted.empty:
             ajudantes_unicos = df_melted.drop_duplicates(subset=['AJUDANTE_COD'])
             for _, aj in ajudantes_unicos.iterrows():
                 cod_aj = aj['AJUDANTE_COD']
+                
+                # Se não estiver na lista de visíveis (Fixo ou Visitante Qualificado), pula
+                if cod_aj not in ids_visiveis:
+                    continue
+
                 cod_mot_pai = motorista_fixo_map.get(cod_aj)
                 dados_pai = premio_motorista_map.get(cod_mot_pai, default_premio_info) if cod_mot_pai else default_premio_info
                 

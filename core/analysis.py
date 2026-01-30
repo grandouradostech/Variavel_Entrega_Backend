@@ -36,12 +36,23 @@ def _preparar_dataframe_ajudantes(df: pd.DataFrame) -> pd.DataFrame:
     
     df_global_melted = pd.concat(ajudantes_dfs)
     
+    # --- SANITIZAÇÃO RIGOROSA ---
+    # 1. Remove caracteres inválidos
+    df_global_melted['AJUDANTE_NOME'] = df_global_melted['AJUDANTE_NOME'].astype(str)
+    
+    # 2. Split de nomes compostos com '/' (Ex: "JOAO / MARIA")
+    # Assume-se que o ID (CODJ) pertence ao primeiro nome listado.
+    df_global_melted['AJUDANTE_NOME'] = df_global_melted['AJUDANTE_NOME'].apply(
+        lambda x: x.split('/')[0].strip() if '/' in x else x
+    )
+
     df_global_melted.dropna(subset=['AJUDANTE_NOME'], inplace=True)
-    df_global_melted = df_global_melted[df_global_melted['AJUDANTE_NOME'].astype(str).str.strip() != '']
+    df_global_melted = df_global_melted[df_global_melted['AJUDANTE_NOME'].str.strip() != '']
     df_global_melted['AJUDANTE_COD'] = pd.to_numeric(df_global_melted['AJUDANTE_COD'], errors='coerce')
     df_global_melted.dropna(subset=['AJUDANTE_COD'], inplace=True)
     df_global_melted['AJUDANTE_COD'] = df_global_melted['AJUDANTE_COD'].astype(int)
-    return df_global_melted
+    
+    return df_global_melted.drop_duplicates()
 
 def _calcular_mapas_referencia(df_melted: pd.DataFrame, df_original: pd.DataFrame) -> dict:
     motorista_fixo_map = df_melted.groupby('AJUDANTE_COD')['MOTORISTA_COD'].apply(
@@ -75,7 +86,8 @@ def _classificar_e_atribuir_viagens(
     viagens_com_motorista: pd.DataFrame, 
     mapas: Dict[str, Any], 
     total_viagens: int,
-    regras: Dict[str, Any]
+    regras: Dict[str, Any],
+    ids_visiveis: set
 ):
     viagens_fixas = []
     viagens_visitantes = []
@@ -92,6 +104,7 @@ def _classificar_e_atribuir_viagens(
         if is_primary_fixed or is_significant:
             viagem_data['posicao_fixa'] = mapas["posicao_fixa_map"].get(viagem_data['cod_ajudante'], 'AJUDANTE 1')
             viagens_fixas.append(viagem_data)
+            ids_visiveis.add(viagem_data['cod_ajudante'])
         else:
             viagens_visitantes.append(viagem_data)
 
@@ -118,6 +131,7 @@ def _classificar_e_atribuir_viagens(
     for visitante in viagens_visitantes:
         if visitante['num_viagens'] > limite_minimo_visitante:
             info_linha['VISITANTES'].append(f"{visitante['nome_ajudante'].strip()} ({visitante['num_viagens']}x)")
+            ids_visiveis.add(visitante['cod_ajudante'])
 
 def gerar_dashboard_e_mapas(df: pd.DataFrame) -> dict:
     regras = {
@@ -134,7 +148,8 @@ def gerar_dashboard_e_mapas(df: pd.DataFrame) -> dict:
         return {
             "dashboard_data": [], 
             "mapas": {}, 
-            "df_melted": df_melted
+            "df_melted": df_melted,
+            "ids_visiveis": set()
         }
 
     mapas = _calcular_mapas_referencia(df_melted, df)
@@ -142,11 +157,13 @@ def gerar_dashboard_e_mapas(df: pd.DataFrame) -> dict:
     contagem_viagens_ajudantes['AJUDANTE_NOME'] = contagem_viagens_ajudantes['AJUDANTE_COD'].map(mapas["nome_ajudante_map"])
     
     dashboard_data = []
+    ids_visiveis = set() # Set para coletar IDs de ajudantes que aparecem no Xadrez
+    
     colunas_motorista_base = ['COD', 'MOTORISTA', 'MOTORISTA_2', 'COD_2']
     colunas_existentes = [col for col in colunas_motorista_base if col in df.columns]
     
     if 'COD' not in df.columns:
-         return {"dashboard_data": [], "mapas": mapas, "df_melted": df_melted}
+         return {"dashboard_data": [], "mapas": mapas, "df_melted": df_melted, "ids_visiveis": set()}
 
     motoristas_no_periodo = df[colunas_existentes].drop_duplicates(subset=['COD'])
     
@@ -176,7 +193,7 @@ def gerar_dashboard_e_mapas(df: pd.DataFrame) -> dict:
         viagens_com_motorista = contagem_viagens_ajudantes[contagem_viagens_ajudantes['MOTORISTA_COD'] == cod_motorista]
         
         _classificar_e_atribuir_viagens(
-            info_linha, viagens_com_motorista, mapas, total_viagens, regras
+            info_linha, viagens_com_motorista, mapas, total_viagens, regras, ids_visiveis
         )
         dashboard_data.append(info_linha)
     if dashboard_data:
@@ -191,5 +208,6 @@ def gerar_dashboard_e_mapas(df: pd.DataFrame) -> dict:
     return {
         "dashboard_data": dashboard_final,
         "mapas": mapas,
-        "df_melted": df_melted
+        "df_melted": df_melted,
+        "ids_visiveis": list(ids_visiveis) # Retorna como lista para ser serializável
     }
